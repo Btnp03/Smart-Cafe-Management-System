@@ -1,18 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AuthShell from "../_components/auth-shell";
+import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { user, loading } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<"success" | "error" | null>(null);
+  const requestedPath = searchParams.get("next");
+  const nextPath =
+    requestedPath && requestedPath.startsWith("/") ? requestedPath : "/dashboard";
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace(nextPath);
+    }
+  }, [loading, nextPath, router, user]);
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -34,7 +46,8 @@ export default function LoginPage() {
 
     setStatusType("success");
     setStatusMessage("Signed in. Redirecting...");
-    router.push("/dashboard");
+    router.replace(nextPath);
+    router.refresh();
   }
 
   return (
@@ -89,10 +102,10 @@ export default function LoginPage() {
           />
 
           <button
-            disabled={isSubmitting}
+            disabled={isSubmitting || loading}
             className="w-full rounded-2xl bg-slate-950 px-6 py-3 font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500"
           >
-            {isSubmitting ? "Signing in..." : "Login"}
+            {isSubmitting || loading ? "Signing in..." : "Login"}
           </button>
         </form>
       </div>

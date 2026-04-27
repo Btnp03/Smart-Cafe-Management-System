@@ -1,11 +1,11 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../../lib/supabase";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/app/context/AuthContext";
 import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
+import SmartImage from "@/app/_components/smart-image";
 
 export default function EditMenuPage() {
   const router = useRouter();
@@ -181,7 +181,7 @@ export default function EditMenuPage() {
 
         {imageUrl && (
           <div className="relative h-40 w-full overflow-hidden rounded">
-            <Image
+            <SmartImage
               src={imageUrl}
               alt={name || "Menu image"}
               fill

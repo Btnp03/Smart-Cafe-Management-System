@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Image from "next/image";
 import { supabase } from "../../../lib/supabase";
 import PosPageShell from "../_components/pos-page-shell";
 import { useAuth } from "@/app/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
+import SmartImage from "@/app/_components/smart-image";
 
 type Menu = {
   id: string;
@@ -272,7 +272,7 @@ export default function POSPage() {
                   className="overflow-hidden rounded-2xl border border-slate-300 bg-white text-left transition hover:border-slate-500"
                 >
                   <div className="relative h-36 w-full">
-                    <Image
+                    <SmartImage
                       src={menu.image_url}
                       alt={menu.name}
                       fill

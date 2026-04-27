@@ -1,11 +1,11 @@
 "use client";
 
-import Image from "next/image";
 import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { isAdminRole } from "@/lib/branch-scope";
+import SmartImage from "../_components/smart-image";
 
 type Menu = {
   id: string;
@@ -193,7 +193,7 @@ export default function DashboardPage() {
                 className="overflow-hidden rounded-[28px] border border-slate-300 bg-slate-50 shadow-[0_20px_40px_rgba(15,23,42,0.05)]"
               >
                 <div className="relative h-44 w-full">
-                  <Image
+                  <SmartImage
                     src={menu.image_url}
                     alt={menu.name}
                     fill

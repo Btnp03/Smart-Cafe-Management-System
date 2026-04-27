@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "@/lib/supabase";
 
@@ -134,15 +134,59 @@ export default function RootShell({ children }: RootShellProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const isPlainPage = pathname === "/login" || pathname === "/register";
+  const isProtectedRoute = !isPlainPage;
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    if (!user && isProtectedRoute) {
+      const nextPath =
+        pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/login${nextPath}`);
+      return;
+    }
+
+    if (user && isPlainPage) {
+      router.replace("/dashboard");
+    }
+  }, [isPlainPage, isProtectedRoute, loading, pathname, router, user]);
+
+  if (loading && isProtectedRoute) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#0f172a_0%,#111827_38%,#1f2937_100%)] px-6 text-slate-100">
+        <div className="rounded-[32px] border border-white/10 bg-white/[0.05] px-8 py-6 text-center shadow-[0_30px_80px_rgba(15,23,42,0.3)]">
+          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-400">
+            Smart Cafe
+          </p>
+          <p className="mt-3 text-lg font-semibold text-white">Checking session...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isPlainPage) {
     return <>{children}</>;
   }
 
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#0f172a_0%,#111827_38%,#1f2937_100%)] px-6 text-slate-100">
+        <div className="rounded-[32px] border border-white/10 bg-white/[0.05] px-8 py-6 text-center shadow-[0_30px_80px_rgba(15,23,42,0.3)]">
+          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-400">
+            Smart Cafe
+          </p>
+          <p className="mt-3 text-lg font-semibold text-white">Redirecting to login...</p>
+        </div>
+      </div>
+    );
+  }
+
   async function handleLogout() {
     setIsLoggingOut(true);
     await supabase.auth.signOut();
-    router.push("/login");
+    router.replace("/login");
     router.refresh();
     setIsLoggingOut(false);
   }

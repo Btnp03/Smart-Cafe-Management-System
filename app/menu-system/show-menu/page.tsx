@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
+import SmartImage from "@/app/_components/smart-image";
 
 type Menu = {
   id: number;
@@ -320,7 +320,7 @@ export default function ShowMenuPage() {
                     >
                       {menu.image_url ? (
                         <div className="relative h-52 w-full">
-                          <Image
+                          <SmartImage
                             src={menu.image_url}
                             alt={menu.name}
                             fill

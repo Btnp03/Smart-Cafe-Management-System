@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -40,33 +41,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function getUserProfile() {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const session = sessionData.session;
+  const clearInvalidSession = useCallback(async () => {
+    setUser(null);
+    await supabase.auth.signOut({ scope: "local" });
+  }, []);
 
-    if (!session) {
-      setUser(null);
+  const getUserProfile = useCallback(async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select(
+          `
+            *,
+            branch:branch_id (
+              id,
+              branch_name
+            )
+          `
+        )
+        .eq("id", session.user.id)
+        .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      setUser((profile as UserProfile | null) ?? null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message.includes("Invalid Refresh Token")) {
+        await clearInvalidSession();
+      } else {
+        console.error("Failed to load auth session", error);
+        setUser(null);
+      }
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select(
-        `
-          *,
-          branch:branch_id (
-            id,
-            branch_name
-          )
-        `
-      )
-      .eq("id", session.user.id)
-      .single();
-
-    setUser((profile as UserProfile | null) ?? null);
-    setLoading(false);
-  }
+  }, [clearInvalidSession]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -83,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timer);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [getUserProfile]);
 
   return <AuthContext.Provider value={{ user, loading }}>{children}</AuthContext.Provider>;
 }
