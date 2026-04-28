@@ -6,10 +6,18 @@ import { useRouter } from "next/navigation";
 import AuthShell from "../_components/auth-shell";
 import { useAuth } from "../context/AuthContext";
 
+type Branch = {
+  id: string;
+  branch_name: string;
+};
+
 export default function RegisterPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [isLoadingBranches, setIsLoadingBranches] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -25,10 +33,48 @@ export default function RegisterPage() {
     }
   }, [loading, router, user]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadBranches() {
+      setIsLoadingBranches(true);
+
+      const { data, error } = await supabase
+        .from("branch")
+        .select("id, branch_name")
+        .order("branch_name", { ascending: true });
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (error) {
+        setStatusType("error");
+        setStatusMessage(error.message || "Failed to load branches.");
+        setBranches([]);
+        setIsLoadingBranches(false);
+        return;
+      }
+
+      setBranches((data as Branch[]) || []);
+      setIsLoadingBranches(false);
+    }
+
+    void loadBranches();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   async function handleRegister(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setStatusMessage(null);
     setStatusType(null);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedName = name.trim();
+    const normalizedPhone = phone.trim();
 
     if (password !== confirmPassword) {
       setStatusType("error");
@@ -36,10 +82,16 @@ export default function RegisterPage() {
       return;
     }
 
+    if (!selectedBranchId) {
+      setStatusType("error");
+      setStatusMessage("Please select a branch.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
     });
 
@@ -58,16 +110,19 @@ export default function RegisterPage() {
       return;
     }
 
-    const { error: profileError } = await supabase.from("profiles").insert([
-      {
-        id: authUser.id,
-        email,
-        name,
-        phone,
-        role: "staff",
-        branch_id: null,
-      },
-    ]);
+    const { error: profileError } = await supabase.from("profiles").upsert(
+      [
+        {
+          id: authUser.id,
+          email: normalizedEmail,
+          name: normalizedName,
+          phone: normalizedPhone,
+          role: "staff",
+          branch_id: selectedBranchId,
+        },
+      ],
+      { onConflict: "id" }
+    );
 
     if (profileError) {
       setStatusType("error");
@@ -78,7 +133,8 @@ export default function RegisterPage() {
 
     setStatusType("success");
     setStatusMessage("Account created. Redirecting to sign in...");
-    router.push("/login");
+    router.replace("/login");
+    router.refresh();
   }
 
   return (
@@ -131,6 +187,26 @@ export default function RegisterPage() {
             onChange={(e) => setPhone(e.target.value)}
           />
 
+          <select
+            className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 outline-none transition focus:border-slate-900 focus:bg-white"
+            value={selectedBranchId}
+            onChange={(e) => setSelectedBranchId(e.target.value)}
+            disabled={isLoadingBranches || branches.length === 0}
+          >
+            <option value="">
+              {isLoadingBranches
+                ? "Loading branches..."
+                : branches.length === 0
+                  ? "No branches available"
+                  : "Select Branch"}
+            </option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                {branch.branch_name}
+              </option>
+            ))}
+          </select>
+
           <input
             className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 outline-none transition focus:border-slate-900 focus:bg-white"
             placeholder="Email"
@@ -155,7 +231,7 @@ export default function RegisterPage() {
           />
 
           <button
-            disabled={isSubmitting}
+            disabled={isSubmitting || isLoadingBranches || branches.length === 0}
             className="w-full rounded-2xl bg-slate-950 px-6 py-3 font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500"
           >
             {isSubmitting ? "Creating account..." : "Register"}
