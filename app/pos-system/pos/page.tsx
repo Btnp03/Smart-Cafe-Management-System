@@ -6,9 +6,9 @@ import PosPageShell from "../_components/pos-page-shell";
 import { useAuth } from "@/app/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
+  getAccessibleMenuBranchIds,
   isAdminRole,
   MAIN_BRANCH_NAME,
-  withMenuReadScope,
 } from "@/lib/branch-scope";
 import SmartImage from "@/app/_components/smart-image";
 import {
@@ -72,14 +72,21 @@ export default function POSPage() {
   const loadMenus = useCallback(async () => {
     if (!isAdminRole(user) && !user?.branch_id) return;
 
-    const menuQuery = withMenuReadScope(
-      supabase.from("menus").select(`
+    const branchIds = getAccessibleMenuBranchIds(user, mainBranchId);
+    let menuQuery = supabase.from("menus").select(`
       *,
       category:categories(name)
-    `),
-      user,
-      mainBranchId
-    );
+    `);
+
+    if (!isAdminRole(user)) {
+      if (branchIds.length === 0) {
+        menuQuery = menuQuery.eq("branch_id", "__missing_branch__");
+      } else if (branchIds.length === 1) {
+        menuQuery = menuQuery.eq("branch_id", branchIds[0]);
+      } else {
+        menuQuery = menuQuery.in("branch_id", branchIds);
+      }
+    }
 
     const { data, error } = await menuQuery;
 

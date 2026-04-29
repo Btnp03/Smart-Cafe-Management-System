@@ -4,10 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import {
+  getAccessibleMenuBranchIds,
   isAdminRole,
   MAIN_BRANCH_NAME,
   withBranchScope,
-  withMenuReadScope,
 } from "@/lib/branch-scope";
 import SmartImage from "@/app/_components/smart-image";
 
@@ -76,14 +76,22 @@ export default function ShowMenuPage() {
 
     setScopeUser(profile);
 
-    const menuQuery = withMenuReadScope(
-      supabase.from("menus").select(`
+    const branchIds = getAccessibleMenuBranchIds(profile, mainBranchId);
+    let menuQuery = supabase.from("menus").select(`
       *,
       category:categories(name)
-    `),
-      profile,
-      mainBranchId
-    );
+    `);
+
+    if (!isAdminRole(profile)) {
+      if (branchIds.length === 0) {
+        menuQuery = menuQuery.eq("branch_id", "__missing_branch__");
+      } else if (branchIds.length === 1) {
+        menuQuery = menuQuery.eq("branch_id", branchIds[0]);
+      } else {
+        menuQuery = menuQuery.in("branch_id", branchIds);
+      }
+    }
+
     const { data, error } = await menuQuery.order("id", { ascending: false });
 
     if (error) {
