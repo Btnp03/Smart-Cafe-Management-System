@@ -4,11 +4,11 @@ export type ScopeUser = {
 };
 
 type BranchScopedQuery = {
-  eq: (column: string, value: string) => BranchScopedQuery;
-  in?: (column: string, values: string[]) => BranchScopedQuery;
+  eq: (column: string, value: string) => unknown;
+  in?: (column: string, values: string[]) => unknown;
 };
 
-export const MAIN_BRANCH_NAME = "จตุจักร";
+export const MAIN_BRANCH_NAME = "\u0e08\u0e15\u0e38\u0e08\u0e31\u0e01\u0e23";
 
 export function isAdminRole(user: ScopeUser | null | undefined) {
   const role = (user?.role || "").toLowerCase();
@@ -24,10 +24,12 @@ export function withBranchScope<T extends BranchScopedQuery>(
   }
 
   if (!user?.branch_id) {
-    return query.eq("branch_id", "__missing_branch__") as T;
+    query.eq("branch_id", "__missing_branch__");
+    return query;
   }
 
-  return query.eq("branch_id", user.branch_id) as T;
+  query.eq("branch_id", user.branch_id);
+  return query;
 }
 
 export function getAccessibleMenuBranchIds(
@@ -72,12 +74,15 @@ export function withMenuReadScope<T extends BranchScopedQuery>(
   const branchIds = getAccessibleMenuBranchIds(user, mainBranchId);
 
   if (branchIds.length === 0) {
-    return query.eq("branch_id", "__missing_branch__") as T;
+    query.eq("branch_id", "__missing_branch__");
+    return query;
   }
 
   if (branchIds.length === 1 || !query.in) {
-    return query.eq("branch_id", branchIds[0]) as T;
+    query.eq("branch_id", branchIds[0]);
+    return query;
   }
 
-  return query.in("branch_id", branchIds) as T;
+  query.in("branch_id", branchIds);
+  return query;
 }
