@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
-import { isAdminRole } from "@/lib/branch-scope";
+import {
+  getInheritedBranchIds,
+  isAdminRole,
+  MAIN_BRANCH_NAME,
+} from "@/lib/branch-scope";
 
 type Category = {
   id: string;
@@ -13,6 +17,7 @@ type Category = {
 
 type Branch = {
   id: string;
+  branch_name: string;
 };
 
 export default function AddService() {
@@ -34,6 +39,36 @@ export default function AddService() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [mainBranchId, setMainBranchId] = useState<string | null>(null);
+
+  const loadCategoriesForBranches = useCallback(async (targetBranchId: string) => {
+    const accessibleBranchIds = getInheritedBranchIds(targetBranchId, mainBranchId);
+
+    let categoryQuery = supabase.from("categories").select("*");
+
+    if (accessibleBranchIds.length === 0) {
+      setCategories([]);
+      setCategoryId("");
+      return;
+    }
+
+    if (accessibleBranchIds.length === 1) {
+      categoryQuery = categoryQuery.eq("branch_id", accessibleBranchIds[0]);
+    } else {
+      categoryQuery = categoryQuery.in("branch_id", accessibleBranchIds);
+    }
+
+    const { data, error } = await categoryQuery.order("name", { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
+    setCategories((data as Category[]) || []);
+    setCategoryId("");
+  }, [mainBranchId]);
 
   const getProfile = useCallback(async () => {
     setPageStatus("loading");
@@ -71,23 +106,95 @@ export default function AddService() {
       return;
     }
 
-    setBranchId(profile.branch_id || null);
+    if (adminMode) {
+      const { data: branchData, error: branchError } = await supabase
+        .from("branch")
+        .select("id, branch_name")
+        .order("branch_name", { ascending: true });
 
-    let categoryQuery = supabase.from("categories").select("*");
-    if (!adminMode && profile.branch_id) {
-      categoryQuery = categoryQuery.eq("branch_id", profile.branch_id);
-    }
+      if (branchError) {
+        setPageStatus("error");
+        setPageError(branchError.message || "Failed to load branches");
+        return;
+      }
 
-    const { data, error } = await categoryQuery.order("name", { ascending: true });
-    if (error) {
-      setPageStatus("error");
-      setPageError(error.message || "Failed to load categories");
+      setBranches((branchData as Branch[]) || []);
+      setBranchId(null);
+      setSelectedBranchId("");
+      setCategories([]);
+      setCategoryId("");
+      setPageStatus("success");
       return;
     }
 
-    setCategories((data as Category[]) || []);
+    setBranchId(profile.branch_id || null);
+    setSelectedBranchId(profile.branch_id || "");
+    if (profile.branch_id) {
+      try {
+        await loadCategoriesForBranches(profile.branch_id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load categories";
+        setPageStatus("error");
+        setPageError(message);
+        return;
+      }
+    }
     setPageStatus("success");
-  }, [router]);
+  }, [loadCategoriesForBranches, router]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadMainBranch() {
+      const { data } = await supabase
+        .from("branch")
+        .select("id")
+        .eq("branch_name", MAIN_BRANCH_NAME)
+        .maybeSingle();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setMainBranchId(data?.id ?? null);
+    }
+
+    void loadMainBranch();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin || !selectedBranchId) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadCategoriesForBranch() {
+      try {
+        await loadCategoriesForBranches(selectedBranchId);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Failed to load categories";
+        setFormMessageType("error");
+        setFormMessage(message);
+        setCategories([]);
+      }
+    }
+
+    void loadCategoriesForBranch();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAdmin, loadCategoriesForBranches, selectedBranchId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -127,75 +234,25 @@ export default function AddService() {
     }
 
     let insertError: string | null = null;
+    const targetBranchId = isAdmin ? selectedBranchId : branchId;
 
-    if (isAdmin) {
-      const { data: branches, error: branchError } = await supabase
-        .from("branch")
-        .select("id");
+    if (!targetBranchId) {
+      setFormMessageType("error");
+      setFormMessage("Please select a target branch.");
+      setLoading(false);
+      return;
+    }
 
-      if (branchError || !branches || branches.length === 0) {
-        setFormMessageType("error");
-        setFormMessage(branchError?.message || "No branches found");
-        setLoading(false);
-        return;
-      }
-
-      const { data: selectedCategory, error: selectedCategoryError } =
-        await supabase
-          .from("categories")
-          .select("name")
-          .eq("id", categoryId)
-          .single();
-
-      if (selectedCategoryError || !selectedCategory?.name) {
-        setFormMessageType("error");
-        setFormMessage(selectedCategoryError?.message || "Category not found");
-        setLoading(false);
-        return;
-      }
-
-      const branchIds = (branches as Branch[]).map((b) => b.id);
-      const { data: matchedCategories, error: matchedCategoryError } =
-        await supabase
-          .from("categories")
-          .select("id, branch_id")
-          .in("branch_id", branchIds)
-          .eq("name", selectedCategory.name);
-
-      if (matchedCategoryError) {
-        setFormMessageType("error");
-        setFormMessage(matchedCategoryError.message);
-        setLoading(false);
-        return;
-      }
-
-      const categoryByBranch = new Map<string, string>();
-      (matchedCategories || []).forEach((cat) => {
-        categoryByBranch.set(cat.branch_id, cat.id);
-      });
-
-      const rows = branchIds.map((targetBranchId) => ({
+    const { error } = await supabase.from("menus").insert([
+      {
         name,
         price: Number(price),
         image_url: imageUrl,
         branch_id: targetBranchId,
-        category_id: categoryByBranch.get(targetBranchId) || null,
-      }));
-
-      const { error } = await supabase.from("menus").insert(rows);
-      insertError = error?.message || null;
-    } else {
-      const { error } = await supabase.from("menus").insert([
-        {
-          name,
-          price: Number(price),
-          image_url: imageUrl,
-          branch_id: branchId,
-          category_id: categoryId,
-        },
-      ]);
-      insertError = error?.message || null;
-    }
+        category_id: categoryId,
+      },
+    ]);
+    insertError = error?.message || null;
 
     if (insertError) {
       setFormMessageType("error");
@@ -205,9 +262,7 @@ export default function AddService() {
     }
 
     setFormMessageType("success");
-    setFormMessage(
-      isAdmin ? "Add menu success for all branches" : "Add menu success"
-    );
+    setFormMessage("Add menu success");
     router.push("/menu-system/show-menu");
     router.refresh();
   }
@@ -264,6 +319,30 @@ export default function AddService() {
               ) : null}
 
               <div className="grid gap-5">
+                {isAdmin ? (
+                  <select
+                    required
+                    className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-4 text-slate-900 outline-none transition focus:border-slate-900 focus:bg-white"
+                    value={selectedBranchId}
+                    onChange={(e) => {
+                      setSelectedBranchId(e.target.value);
+                      setFormMessage(null);
+                      setFormMessageType(null);
+                    }}
+                  >
+                    <option value="">Select target branch</option>
+                    {branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.branch_name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-2xl border border-slate-300 bg-slate-50 px-4 py-4 text-slate-600">
+                    Active branch: {categories[0]?.branch_id || branchId}
+                  </div>
+                )}
+
                 <input
                   required
                   className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-4 text-slate-900 outline-none transition focus:border-slate-900 focus:bg-white"
@@ -286,11 +365,18 @@ export default function AddService() {
                   className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-4 text-slate-900 outline-none transition focus:border-slate-900 focus:bg-white"
                   value={categoryId}
                   onChange={(e) => setCategoryId(e.target.value)}
+                  disabled={isAdmin && !selectedBranchId}
                 >
                   <option value="">Select category</option>
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.name}
+                      {selectedBranchId &&
+                      mainBranchId &&
+                      cat.branch_id === mainBranchId &&
+                      selectedBranchId !== mainBranchId
+                        ? " (Main branch)"
+                        : ""}
                     </option>
                   ))}
                 </select>

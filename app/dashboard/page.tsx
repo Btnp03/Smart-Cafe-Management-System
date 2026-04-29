@@ -4,7 +4,11 @@ import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { isAdminRole } from "@/lib/branch-scope";
+import {
+  isAdminRole,
+  MAIN_BRANCH_NAME,
+  withMenuReadScope,
+} from "@/lib/branch-scope";
 import SmartImage from "../_components/smart-image";
 
 type Menu = {
@@ -28,6 +32,7 @@ export default function DashboardPage() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [todaySales, setTodaySales] = useState(0);
+  const [mainBranchId, setMainBranchId] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     if (!isAdminRole(user) && !user?.branch_id) return;
@@ -36,9 +41,11 @@ export default function DashboardPage() {
     setPageStatus("loading");
     setErrorMessage(null);
 
-    const menuQuery = isAdminRole(user)
-      ? supabase.from("menus").select("*")
-      : supabase.from("menus").select("*").eq("branch_id", branchId!);
+    const menuQuery = withMenuReadScope(
+      supabase.from("menus").select("*"),
+      user,
+      mainBranchId
+    );
     const { data: menuData, error: menuError } = await menuQuery.order("id", {
       ascending: false,
     });
@@ -76,7 +83,21 @@ export default function DashboardPage() {
       ) ?? 0;
     setTodaySales(total);
     setPageStatus("success");
-  }, [user]);
+  }, [mainBranchId, user]);
+
+  useEffect(() => {
+    async function loadMainBranch() {
+      const { data } = await supabase
+        .from("branch")
+        .select("id")
+        .eq("branch_name", MAIN_BRANCH_NAME)
+        .maybeSingle();
+
+      setMainBranchId(data?.id ?? null);
+    }
+
+    void loadMainBranch();
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;

@@ -5,8 +5,16 @@ import { supabase } from "../../../lib/supabase";
 import PosPageShell from "../_components/pos-page-shell";
 import { useAuth } from "@/app/context/AuthContext";
 import { useRouter } from "next/navigation";
-import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
+import {
+  isAdminRole,
+  MAIN_BRANCH_NAME,
+  withMenuReadScope,
+} from "@/lib/branch-scope";
 import SmartImage from "@/app/_components/smart-image";
+import {
+  getMenuCustomizationPreset,
+  type ToppingOption,
+} from "@/lib/menu-customizations";
 
 type Menu = {
   id: string;
@@ -27,10 +35,16 @@ type MenuRow = {
 };
 
 type CartItem = {
-  id: string;
+  lineId: string;
+  menuId: string;
   name: string;
-  price: number;
+  basePrice: number;
+  unitPrice: number;
   qty: number;
+  categoryName?: string;
+  sweetness?: string | null;
+  toppings: string[];
+  specialInstructions: string;
 };
 
 type PageStatus = "loading" | "success" | "error";
@@ -49,16 +63,25 @@ export default function POSPage() {
   const [checkoutNotice, setCheckoutNotice] = useState<CheckoutNotice | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("ALL");
+  const [mainBranchId, setMainBranchId] = useState<string | null>(null);
+  const [activeMenu, setActiveMenu] = useState<Menu | null>(null);
+  const [selectedSweetness, setSelectedSweetness] = useState<string | null>(null);
+  const [selectedToppings, setSelectedToppings] = useState<string[]>([]);
+  const [specialInstructions, setSpecialInstructions] = useState("");
 
   const loadMenus = useCallback(async () => {
     if (!isAdminRole(user) && !user?.branch_id) return;
 
-    const menuQuery = supabase.from("menus").select(`
+    const menuQuery = withMenuReadScope(
+      supabase.from("menus").select(`
       *,
       category:categories(name)
-    `);
+    `),
+      user,
+      mainBranchId
+    );
 
-    const { data, error } = await withBranchScope(menuQuery, user);
+    const { data, error } = await menuQuery;
 
     if (error) {
       setPageStatus("error");
@@ -77,7 +100,21 @@ export default function POSPage() {
     setPageError(null);
     setMenus(mappedMenus);
     setPageStatus("success");
-  }, [user]);
+  }, [mainBranchId, user]);
+
+  useEffect(() => {
+    async function loadMainBranch() {
+      const { data } = await supabase
+        .from("branch")
+        .select("id")
+        .eq("branch_name", MAIN_BRANCH_NAME)
+        .maybeSingle();
+
+      setMainBranchId(data?.id ?? null);
+    }
+
+    void loadMainBranch();
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
@@ -97,27 +134,95 @@ export default function POSPage() {
     return () => clearTimeout(timer);
   }, [authLoading, user, router, loadMenus]);
 
-  function addToCart(menu: Menu) {
+  function buildCustomizationKey(
+    menuId: string,
+    sweetness: string | null,
+    toppings: string[],
+    instructions: string
+  ) {
+    return [
+      menuId,
+      sweetness || "default",
+      toppings.slice().sort().join("|"),
+      instructions.trim().toLowerCase(),
+    ].join("::");
+  }
+
+  function addConfiguredItemToCart(item: Omit<CartItem, "qty">) {
     setCheckoutNotice(null);
-    const existingItem = cart.find((item) => item.id === menu.id);
+    const existingItem = cart.find((cartItem) => cartItem.lineId === item.lineId);
 
     if (existingItem) {
       setCart(
-        cart.map((item) =>
-          item.id === menu.id ? { ...item, qty: item.qty + 1 } : item
+        cart.map((cartItem) =>
+          cartItem.lineId === item.lineId
+            ? { ...cartItem, qty: cartItem.qty + 1 }
+            : cartItem
         )
       );
       return;
     }
 
-    setCart([
-      ...cart,
-      { id: menu.id, name: menu.name, price: menu.price, qty: 1 },
-    ]);
+    setCart([...cart, { ...item, qty: 1 }]);
+  }
+
+  function openCustomization(menu: Menu) {
+    const preset = getMenuCustomizationPreset(menu.category_name);
+    setActiveMenu(menu);
+    setSelectedSweetness(preset.sweetnessOptions?.[2] ?? null);
+    setSelectedToppings([]);
+    setSpecialInstructions("");
+  }
+
+  function closeCustomization() {
+    setActiveMenu(null);
+    setSelectedSweetness(null);
+    setSelectedToppings([]);
+    setSpecialInstructions("");
+  }
+
+  function toggleTopping(option: ToppingOption) {
+    setSelectedToppings((current) =>
+      current.includes(option.label)
+        ? current.filter((value) => value !== option.label)
+        : [...current, option.label]
+    );
+  }
+
+  function confirmCustomization() {
+    if (!activeMenu) {
+      return;
+    }
+
+    const preset = getMenuCustomizationPreset(activeMenu.category_name);
+    const toppingPrice = (preset.toppingOptions || [])
+      .filter((option) => selectedToppings.includes(option.label))
+      .reduce((sum, option) => sum + option.price, 0);
+    const normalizedInstructions = specialInstructions.trim();
+    const lineId = buildCustomizationKey(
+      activeMenu.id,
+      selectedSweetness,
+      selectedToppings,
+      normalizedInstructions
+    );
+
+    addConfiguredItemToCart({
+      lineId,
+      menuId: activeMenu.id,
+      name: activeMenu.name,
+      basePrice: activeMenu.price,
+      unitPrice: activeMenu.price + toppingPrice,
+      categoryName: activeMenu.category_name,
+      sweetness: selectedSweetness,
+      toppings: selectedToppings,
+      specialInstructions: normalizedInstructions,
+    });
+
+    closeCustomization();
   }
 
   function getTotal() {
-    return cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+    return cart.reduce((sum, item) => sum + item.unitPrice * item.qty, 0);
   }
 
   async function checkout() {
@@ -160,10 +265,13 @@ export default function POSPage() {
 
     const items = cart.map((item) => ({
       order_id: order.id,
-      menu_id: item.id,
+      menu_id: item.menuId,
       quantity: item.qty,
-      price: item.price,
+      price: item.unitPrice,
       branch_id: user.branch_id,
+      sweetness: item.sweetness,
+      toppings: item.toppings,
+      special_instructions: item.specialInstructions || null,
     }));
 
     const { error: itemError } = await supabase.from("order_items").insert(items);
@@ -268,7 +376,7 @@ export default function POSPage() {
                 <button
                   key={menu.id}
                   type="button"
-                  onClick={() => addToCart(menu)}
+                  onClick={() => openCustomization(menu)}
                   className="overflow-hidden rounded-2xl border border-slate-300 bg-white text-left transition hover:border-slate-500"
                 >
                   <div className="relative h-36 w-full">
@@ -290,7 +398,9 @@ export default function POSPage() {
                     <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
                       {menu.category_name}
                     </p>
-                    <p className="text-sm text-slate-600">Tap to add to order</p>
+                    <p className="text-sm text-slate-600">
+                      Tap to customize and add
+                    </p>
                   </div>
                 </button>
               ))
@@ -328,13 +438,28 @@ export default function POSPage() {
           ) : (
             cart.map((item) => (
               <div
-                key={item.id}
-                className="flex justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                key={item.lineId}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
               >
-                <span>
-                  {item.name} x{item.qty}
-                </span>
-                <span>THB {item.price * item.qty}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      {item.name} x{item.qty}
+                    </p>
+                    <div className="mt-1 space-y-1 text-sm text-slate-500">
+                      {item.sweetness ? <p>Sweetness: {item.sweetness}</p> : null}
+                      {item.toppings.length > 0 ? (
+                        <p>Toppings: {item.toppings.join(", ")}</p>
+                      ) : null}
+                      {item.specialInstructions ? (
+                        <p>Note: {item.specialInstructions}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <span className="font-medium text-slate-900">
+                    THB {item.unitPrice * item.qty}
+                  </span>
+                </div>
               </div>
             ))
           )}
@@ -353,6 +478,191 @@ export default function POSPage() {
           </button>
         </div>
       </div>
+
+      {activeMenu ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8">
+          <div className="w-full max-w-2xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.3)]">
+            {(() => {
+              const preset = getMenuCustomizationPreset(activeMenu.category_name);
+              const toppingOptions = preset.toppingOptions || [];
+              const toppingPrice = toppingOptions
+                .filter((option) => selectedToppings.includes(option.label))
+                .reduce((sum, option) => sum + option.price, 0);
+              const previewTotal = activeMenu.price + toppingPrice;
+
+              return (
+                <>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                        Customize item
+                      </p>
+                      <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+                        {activeMenu.name}
+                      </h2>
+                      <p className="mt-2 text-sm text-slate-500">
+                        Base price THB {activeMenu.price}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeCustomization}
+                      className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 transition hover:border-slate-900 hover:text-slate-900"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_280px]">
+                    <div className="space-y-6">
+                      {preset.sweetnessOptions ? (
+                        <section className="space-y-3">
+                          <p className="text-sm font-semibold text-slate-800">
+                            Sweetness level
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {preset.sweetnessOptions.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => setSelectedSweetness(option)}
+                                className={[
+                                  "rounded-full border px-4 py-2 text-sm font-medium transition",
+                                  selectedSweetness === option
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-500",
+                                ].join(" ")}
+                              >
+                                {option}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {toppingOptions.length > 0 ? (
+                        <section className="space-y-3">
+                          <p className="text-sm font-semibold text-slate-800">
+                            Toppings and extras
+                          </p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {toppingOptions.map((option) => {
+                              const isSelected = selectedToppings.includes(option.label);
+
+                              return (
+                                <button
+                                  key={option.label}
+                                  type="button"
+                                  onClick={() => toggleTopping(option)}
+                                  className={[
+                                    "rounded-2xl border px-4 py-3 text-left transition",
+                                    isSelected
+                                      ? "border-slate-900 bg-slate-900 text-white"
+                                      : "border-slate-300 bg-slate-50 text-slate-800 hover:border-slate-500",
+                                  ].join(" ")}
+                                >
+                                  <p className="font-medium">{option.label}</p>
+                                  <p
+                                    className={[
+                                      "mt-1 text-sm",
+                                      isSelected ? "text-slate-200" : "text-slate-500",
+                                    ].join(" ")}
+                                  >
+                                    + THB {option.price}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      <section className="space-y-3">
+                        <label
+                          htmlFor="special-instructions"
+                          className="text-sm font-semibold text-slate-800"
+                        >
+                          Special instructions
+                        </label>
+                        <textarea
+                          id="special-instructions"
+                          value={specialInstructions}
+                          onChange={(e) => setSpecialInstructions(e.target.value)}
+                          rows={4}
+                          placeholder={preset.notePlaceholder}
+                          className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition focus:border-slate-900 focus:bg-white"
+                        />
+                      </section>
+                    </div>
+
+                    <aside className="rounded-[28px] border border-slate-300 bg-slate-50 p-5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                        Order preview
+                      </p>
+                      <div className="mt-4 space-y-3">
+                        <div className="relative h-36 overflow-hidden rounded-2xl">
+                          <SmartImage
+                            src={activeMenu.image_url}
+                            alt={activeMenu.name}
+                            fill
+                            sizes="280px"
+                            className="object-cover"
+                          />
+                        </div>
+                        <p className="text-lg font-semibold text-slate-950">
+                          {activeMenu.name}
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          {activeMenu.category_name}
+                        </p>
+                        {selectedSweetness ? (
+                          <p className="text-sm text-slate-600">
+                            Sweetness: {selectedSweetness}
+                          </p>
+                        ) : null}
+                        <p className="text-sm text-slate-600">
+                          Toppings:{" "}
+                          {selectedToppings.length > 0
+                            ? selectedToppings.join(", ")
+                            : "None"}
+                        </p>
+                        {specialInstructions.trim() ? (
+                          <p className="text-sm text-slate-600">
+                            Note: {specialInstructions.trim()}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-6 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                        <div className="flex items-center justify-between text-sm text-slate-500">
+                          <span>Base price</span>
+                          <span>THB {activeMenu.price}</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-sm text-slate-500">
+                          <span>Extras</span>
+                          <span>THB {toppingPrice}</span>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-base font-semibold text-slate-950">
+                          <span>Unit total</span>
+                          <span>THB {previewTotal}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={confirmCustomization}
+                        className="mt-6 w-full rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white transition hover:bg-slate-800"
+                      >
+                        Add to order
+                      </button>
+                    </aside>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
     </PosPageShell>
   );
 }

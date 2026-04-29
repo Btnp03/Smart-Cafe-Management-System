@@ -9,6 +9,9 @@ import { isAdminRole } from "@/lib/branch-scope";
 type KitchenOrderItem = {
   quantity: number;
   price?: number;
+  sweetness?: string | null;
+  toppings?: string[] | null;
+  special_instructions?: string | null;
   menus?: {
     name: string;
   } | null;
@@ -30,6 +33,9 @@ type RawItem = {
   order_id: string;
   quantity: number;
   price?: number;
+  sweetness?: string | null;
+  toppings?: string[] | null;
+  special_instructions?: string | null;
   menus?: { name: string } | { name: string }[] | null;
 };
 
@@ -140,6 +146,9 @@ export default function KitchenPage() {
         order_id,
         quantity,
         price,
+        sweetness,
+        toppings,
+        special_instructions,
         menus(name)
       `)
       .in("order_id", orderIds);
@@ -157,6 +166,9 @@ export default function KitchenPage() {
       existing.push({
         quantity: item.quantity,
         price: item.price,
+        sweetness: item.sweetness,
+        toppings: item.toppings,
+        special_instructions: item.special_instructions,
         menus: menuRecord || null,
       });
       itemMap.set(item.order_id, existing);
@@ -337,13 +349,24 @@ export default function KitchenPage() {
                   <p className="text-sm text-slate-500">No items in this order.</p>
                 ) : (
                   order.order_items.map((item, i) => (
-                    <div key={i} className="flex items-center justify-between gap-3">
-                      <p className="text-sm text-slate-700">
-                        {item.menus?.name || "Unknown menu"} x {item.quantity}
-                      </p>
-                      <p className="text-sm font-medium text-slate-600">
-                        {item.price ? `THB ${item.price * item.quantity}` : ""}
-                      </p>
+                    <div key={i} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm text-slate-700">
+                          {item.menus?.name || "Unknown menu"} x {item.quantity}
+                        </p>
+                        <p className="text-sm font-medium text-slate-600">
+                          {item.price ? `THB ${item.price * item.quantity}` : ""}
+                        </p>
+                      </div>
+                      <div className="mt-2 space-y-1 text-xs text-slate-500">
+                        {item.sweetness ? <p>Sweetness: {item.sweetness}</p> : null}
+                        {item.toppings && item.toppings.length > 0 ? (
+                          <p>Toppings: {item.toppings.join(", ")}</p>
+                        ) : null}
+                        {item.special_instructions ? (
+                          <p>Note: {item.special_instructions}</p>
+                        ) : null}
+                      </div>
                     </div>
                   ))
                 )}

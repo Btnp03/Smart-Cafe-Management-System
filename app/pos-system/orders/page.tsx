@@ -7,10 +7,23 @@ import { useAuth } from "@/app/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
 
+type OrderItem = {
+  id: string;
+  quantity: number;
+  price: number;
+  sweetness?: string | null;
+  toppings?: string[] | null;
+  special_instructions?: string | null;
+  menus?: {
+    name: string;
+  } | null;
+};
+
 type Order = {
   id: string;
   total: number;
   created_at: string;
+  order_items?: OrderItem[];
 };
 
 export default function OrdersPage() {
@@ -28,7 +41,18 @@ export default function OrdersPage() {
     setPageStatus("loading");
     setErrorMessage(null);
 
-    const ordersQuery = supabase.from("orders").select("*");
+    const ordersQuery = supabase.from("orders").select(`
+      *,
+      order_items(
+        id,
+        quantity,
+        price,
+        sweetness,
+        toppings,
+        special_instructions,
+        menus(name)
+      )
+    `);
     const { data, error } = await withBranchScope(ordersQuery, user).order(
       "created_at",
       { ascending: false }
@@ -107,6 +131,38 @@ export default function OrdersPage() {
               <p className="text-sm text-slate-600">
                 Date: {new Date(order.created_at).toLocaleString()}
               </p>
+            </div>
+
+            <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-sm font-semibold text-slate-800">Items</p>
+              {!order.order_items || order.order_items.length === 0 ? (
+                <p className="text-sm text-slate-500">No item details found.</p>
+              ) : (
+                order.order_items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-slate-900">
+                        {item.menus?.name || "Unknown menu"} x {item.quantity}
+                      </p>
+                      <p className="text-sm text-slate-600">
+                        THB {item.price * item.quantity}
+                      </p>
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs text-slate-500">
+                      {item.sweetness ? <p>Sweetness: {item.sweetness}</p> : null}
+                      {item.toppings && item.toppings.length > 0 ? (
+                        <p>Toppings: {item.toppings.join(", ")}</p>
+                      ) : null}
+                      {item.special_instructions ? (
+                        <p>Note: {item.special_instructions}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         ))}

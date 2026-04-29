@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
-import { isAdminRole, withBranchScope } from "@/lib/branch-scope";
+import {
+  isAdminRole,
+  MAIN_BRANCH_NAME,
+  withBranchScope,
+  withMenuReadScope,
+} from "@/lib/branch-scope";
 import SmartImage from "@/app/_components/smart-image";
 
 type Menu = {
@@ -11,6 +16,7 @@ type Menu = {
   name: string;
   price: number;
   image_url: string;
+  branch_id: string;
   category_name?: string;
 };
 
@@ -19,6 +25,7 @@ type MenuRow = {
   name: string;
   price: number;
   image_url: string;
+  branch_id: string;
   category?: {
     name?: string;
   } | null;
@@ -37,6 +44,7 @@ export default function ShowMenuPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [deletingMenuId, setDeletingMenuId] = useState<number | null>(null);
+  const [mainBranchId, setMainBranchId] = useState<string | null>(null);
 
   const fetchMenus = useCallback(async () => {
     setLoading(true);
@@ -68,13 +76,15 @@ export default function ShowMenuPage() {
 
     setScopeUser(profile);
 
-    const menuQuery = supabase.from("menus").select(`
+    const menuQuery = withMenuReadScope(
+      supabase.from("menus").select(`
       *,
       category:categories(name)
-    `);
-    const { data, error } = await withBranchScope(menuQuery, profile).order("id", {
-      ascending: false,
-    });
+    `),
+      profile,
+      mainBranchId
+    );
+    const { data, error } = await menuQuery.order("id", { ascending: false });
 
     if (error) {
       setErrorMessage(error.message || "Failed to load menus");
@@ -89,7 +99,7 @@ export default function ShowMenuPage() {
 
     setMenus(mappedMenus);
     setLoading(false);
-  }, [router]);
+  }, [mainBranchId, router]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -98,6 +108,20 @@ export default function ShowMenuPage() {
 
     return () => clearTimeout(timer);
   }, [fetchMenus]);
+
+  useEffect(() => {
+    async function loadMainBranch() {
+      const { data } = await supabase
+        .from("branch")
+        .select("id")
+        .eq("branch_name", MAIN_BRANCH_NAME)
+        .maybeSingle();
+
+      setMainBranchId(data?.id ?? null);
+    }
+
+    void loadMainBranch();
+  }, []);
 
   async function deleteMenu(id: number) {
     if (!scopeUser) return;
@@ -318,6 +342,14 @@ export default function ShowMenuPage() {
                       key={menu.id}
                       className="overflow-hidden rounded-[28px] border border-slate-300 bg-white/92 shadow-[0_22px_50px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_28px_65px_rgba(15,23,42,0.1)]"
                     >
+                      {scopeUser?.branch_id &&
+                      mainBranchId &&
+                      menu.branch_id === mainBranchId &&
+                      scopeUser.branch_id !== mainBranchId ? (
+                        <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                          Inherited from main branch
+                        </div>
+                      ) : null}
                       {menu.image_url ? (
                         <div className="relative h-52 w-full">
                           <SmartImage
@@ -348,24 +380,31 @@ export default function ShowMenuPage() {
                           </div>
                         </div>
 
-                        <div className="flex gap-3 pt-2">
-                          <button
-                            onClick={() =>
-                              router.push(`/menu-system/edit/${menu.id}`)
-                            }
-                            className="flex-1 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium text-slate-900 transition hover:border-slate-900 hover:bg-white"
-                          >
-                            Edit
-                          </button>
+                        {isAdminRole(scopeUser) ||
+                        (scopeUser?.branch_id && menu.branch_id === scopeUser.branch_id) ? (
+                          <div className="flex gap-3 pt-2">
+                            <button
+                              onClick={() =>
+                                router.push(`/menu-system/edit/${menu.id}`)
+                              }
+                              className="flex-1 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium text-slate-900 transition hover:border-slate-900 hover:bg-white"
+                            >
+                              Edit
+                            </button>
 
-                          <button
-                            onClick={() => deleteMenu(menu.id)}
-                            disabled={deletingMenuId === menu.id}
-                            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 font-medium text-red-600 transition hover:border-red-300 hover:bg-red-100"
-                          >
-                            {deletingMenuId === menu.id ? "Deleting..." : "Delete"}
-                          </button>
-                        </div>
+                            <button
+                              onClick={() => deleteMenu(menu.id)}
+                              disabled={deletingMenuId === menu.id}
+                              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 font-medium text-red-600 transition hover:border-red-300 hover:bg-red-100"
+                            >
+                              {deletingMenuId === menu.id ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                            This menu is shared from the main branch and can only be edited there.
+                          </div>
+                        )}
                       </div>
                     </article>
                   ))}
