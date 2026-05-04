@@ -67,6 +67,21 @@ export default function RegisterPage() {
     };
   }, []);
 
+  function handlePhoneChange(value: string) {
+    const digitsOnly = value.replace(/\D/g, "").slice(0, 10);
+
+    if (!digitsOnly) {
+      setPhone("");
+      return;
+    }
+
+    if (digitsOnly[0] !== "0") {
+      return;
+    }
+
+    setPhone(digitsOnly);
+  }
+
   async function handleRegister(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setStatusMessage(null);
@@ -85,6 +100,12 @@ export default function RegisterPage() {
     if (!selectedBranchId) {
       setStatusType("error");
       setStatusMessage("Please select a branch.");
+      return;
+    }
+
+    if (!/^0\d{9}$/.test(normalizedPhone)) {
+      setStatusType("error");
+      setStatusMessage("Phone number must start with 0 and contain 10 digits.");
       return;
     }
 
@@ -183,8 +204,11 @@ export default function RegisterPage() {
           <input
             className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 outline-none transition focus:border-slate-900 focus:bg-white"
             placeholder="Phone"
+            type="tel"
+            inputMode="numeric"
+            maxLength={10}
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => handlePhoneChange(e.target.value)}
           />
 
           <select
